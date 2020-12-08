@@ -1,0 +1,1596 @@
+---
+title: "FinalProject"
+author: "Leonardo Placidi"
+date: "SMDS 2 2019-2020, prof. Tardella"
+output: html_document
+---
+The Dataset I will use in this project is composed of data from the online videogame League of Legends(created in 2009). To obtain this data I personally interacted with the Riot(the company onwer of the game and data) API with a medium size python script (as the parsers are mostly in python). The script to download the data can be found on GitHub on this link https://github.com/Gruntrexpewrus/FinalProjectSMDS2/blob/master/LeagueOfLegendsDataCollection.ipynb. \   
+
+League of Legends is famous for its ranked system and going from lowest to highest ranks the tiers are Iron, Bronze, Silver, Gold, Platinum, Diamond, Master, Grandmaster, Challenger. Every tier up until Diamond has 4 ranks called from the bottom IV, III, II, I, then the system changes with only a points distribution in the limited final posititons. The distribution of players is such that 88% are Gold or below and around 0.07% of all players are Master or Above. \   
+
+The Data I am using are from the Ranked Solo/Duo games from the EUW server of the game, which has around 6 millions of players.
+Data are taken from every tier except Master/GM/Challenger, since they present different characteristics. I took the rank IV for every tier and as only 5.7% of players are in Iron, to get enough data I had to get Iron IV and Iron III data, since Iron IV is as difficult to be in as being in Challenger! \   
+
+In the table that will be shown after this introduction we can see that for every index (X in the column), we have the player's tier (in this case Gold since I started from this rank, the reason is that I wanted to first include my profile in the data!), then the summonerName, the in-game-name, the leaguePoints that are the points to reach the higher rank (e.g from Gold IV to Gold III, I will specify more later), the wins until now, the losees until now, and finally if the players is a veteran of the game or not (veteran means he played ranked games multiple years).\     
+To Specify better the leaguePoints, we shall say that they go from 0 to 100, at every win the player will get some points, to a loss will lose some, and arrivged at 100 there is a promotions system to win 2/3 games in order to reach the highest rank. When you fail a promotion series you are given a free win next time you go in promotion, while to change Tier (e.g from Gold to Platinum) you have to win 3/5 games in a promotion series and will get free wins up to 2 wins for failed promotions. When you lose many games at 0 LP you will eventually get demoted, being set at around 70 LP in the lower Rank (e.g. demoted from Gold 4 to Silver1), but demotions that are usually 3 games lost at 0 LP, can be up to 10 games from a tier to the other (To fall from Gold III to Gold 4 you can lose 3 games at 0 LP, while to go from Gold 4 to Silver 1 you should lose > 10 games at 0 LP, depending on a secret 'elo' system of the player called MMR that recognize the 'current ability' and then the rank of a player).\    
+
+The aim of the project will be stated later, but I introduce saying that our variable of interest will be the wins and I will try to predict them given the other features(In particular the rank) for every player. \   
+
+Now let's do some exploratory data analysis, to know better our dataset and the features we will be working with.
+
+```{r Packages and seed}
+set.seed(123)
+require(tidyverse)
+require(ggplot2)
+require(VGAM)
+require(R2jags)
+require(mcmcse)
+require(bayesplot)
+require(TeachingDemos)
+require(nimble)
+require(sadists)
+require(EnvStats)
+require(sadists)
+require(stats)
+require(rmutil)
+```
+
+# 1) Illustration of the dataset
+
+In the following I will show many different perspectives from which we can watch our dataset, taking advantage of our conclusions to discard some features and understand the trend, importance and correltions of the others!
+
+We highlight that the main aim of the project is to create a model to predict wins, so this will be our main variable of interest.
+
+```{r load data2}
+set.seed(123)
+LeagueData <- read.csv("ProjectFinaldataLeagueofLegends.csv")
+#Let's first drop the column X since we already have automatic indexes
+LeagueData = subset(LeagueData, select = -c(X) )
+head(LeagueData)
+```
+
+```{r plots}
+
+#Now let's explore the distribution of the wins
+ggplot(data = LeagueData, mapping = aes(x = wins, colour = tier)) +
+  
+  geom_freqpoly(binwidth = 0.1)
+
+#Actually is a little confused so let's try to see only for gold
+#subset(LeagueData, tier == 'GOLD')
+for( i in unique(LeagueData$tier)){
+  print(i)
+  plot2 <-  ggplot(data = subset(LeagueData, tier == i), mapping = aes(x = wins, colour = tier)) +
+     geom_freqpoly(binwidth = 0.1)
+  print(plot2)
+  }
+for( i in unique(LeagueData$tier)){
+  print(i)
+  plot2 <-  ggplot(data = subset(LeagueData, tier == i), mapping = aes(x = losses, colour = tier)) +
+     geom_freqpoly(binwidth = 0.1)
+  print(plot2)
+  }
+
+
+#Now let's explore the distribution of the losses
+ggplot(data = LeagueData, mapping = aes(x = losses, colour = tier)) +
+  
+  geom_freqpoly(binwidth = 0.1)
+#as we suspected they shuld be correlated! and they will sure be similar distirbutions!
+
+
+#Now let's explore the distribution of the leaguePoints
+ggplot(data = LeagueData) +
+  geom_bar(mapping = aes(x = leaguePoints)) #pretty uniform! even if in 0 there is a great concentration of values
+
+
+
+#Now let's explore the distribution of the veterans
+ggplot(data = LeagueData) +
+  geom_bar(mapping = aes(x = veteran)) 
+#since veterans are very few we could discard this variable and we will not use it for our analysis
+
+
+
+#Now let's explore the distribution of the Tier
+ggplot(data = LeagueData) +
+  geom_bar(mapping = aes(x = tier))
+#a little trick, i creted the dataset such that every tier will have the same number of elements!!!!
+```
+
+
+From here we immediately undeerstand that the game is balanced and the we will expect that win and losses will have the same distribution, making impossible to assume on one and predict the others, they will be alwasy taken singularly or we could consider the winrate, but let's stick with the wins!
+
+
+```{r}
+require(tidyverse)
+qplot(x = LeagueData$veteran, y = LeagueData$wins,
+      geom = "boxplot", data = LeagueData,
+      xlab = "Veteran or not", 
+      ylab = "Wins",
+      fill = I("lightblue"))
+#we see from here that the few veterans (that we will not consider as a feature sigh) win more games!!!
+```
+
+
+```{r}
+#Now we can ask ourselves if in every tier the losses and wins are actually correlated, let's see!
+
+ggplot(LeagueData, aes(x=wins, y=losses, colour=factor(tier))) +
+    geom_point(alpha=.03) +
+    geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs"),alpha=.02, size=1) +
+    ggtitle("Wins vs Losses per Tier")
+
+#So here is clear we have a linear relation between wins and losses (in every tier!)!
+```
+
+Another time is clear that losses and wins are very related and so will be necessary to just choose one of them for our model.
+
+```{r wins v LP}
+# Now let's see the same plot as before but instead of the losses we will consider the LP
+ggplot(LeagueData, aes(x=wins, y=leaguePoints, colour=factor(tier))) +
+    geom_point(alpha=.03) +
+    geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs"),alpha=.02, size=1) +
+    ggtitle("Wins vs LP per Tier")
+
+#Well here is more of a mess since there are a lot of outliers, we just see that League points are alwasy around 50, but does not say much
+```
+
+
+```{r}
+ggplot(LeagueData, aes(x=leaguePoints, y=wins, colour=factor(tier))) +
+    geom_point(alpha=.03) +
+    geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs"),alpha=.02, size=1) +
+    ggtitle("Wins vs LP per Tier")
+
+#Here indeed there is something more interesting!!!
+#we see that ti in general in higher elos have at least 100 games to be around every elo, this means that as we grow in elo we will find more wins at any LP level
+```
+```{r}
+length(LeagueData$wins)
+```
+
+```{r}
+
+hist(LeagueData$wins, 
+     breaks = 100, 
+     prob = TRUE, 
+     main = "Wins density is similar to..?", 
+     xlab = "Wins")
+
+## Sample density
+lines(density(LeagueData$wins), col="red")
+
+## Theoretical normal density
+xbeta <- seq(min(LeagueData$wins), max(LeagueData$wins), length = 1500)
+
+legend("topright", c("Wins"), 
+       bty = "n", lty = c(1,2), col = c("red", "blue"))
+
+
+
+
+lines(density(LeagueData$wins), col="red")
+```
+
+So we will assume that the likelihood function for the wins(and losses) is a Folded Normal.
+
+For the Lp let's observe that the distribution is not actually a unfirom one, but if we would like to create a prior on it we could assume it's uniform.
+
+```{r}
+hist(LeagueData$leaguePoints, 
+     breaks = 15, 
+     prob = TRUE, 
+     main = "LeaguePoints seem pretty uniform!", 
+     xlab = "Wins")
+
+## Sample density
+lines(density(LeagueData$leaguePoints), col="red")
+```
+
+
+
+
+
+# 2) Models and inference
+
+Since we saw we have many interesting features like losses, leaguePoints and tier, we will try to formulate different models with different number of parameters, seeking the one with  lowest DIC. \  
+
+Our first models will depend only on wins, leaguePoints and the tier, we will use jags from now to the end of the project.
+
+As we analyzed before every feature we are able to define prior distributions for this parameters, such also our likelihood, so to speed up the computations and analysis we will perform our diagnostics and choose the best parameters from simulated data.
+
+Note that the diagnostic and more will be performed only one the 'best model' found with every likelihood.
+
+Based on the distributions available in jags and the similarity to our Wins we will assume likelihood to be a Double Exponential, Exponential, F-Distribution, Gamma Distribution, Generalized Gamma, Non Central t distribution, Weibull.
+
+## Model assuming Likelihood as a Double Exponential
+```{r sim}
+
+#So for now we have to simulate the losses, leaguePoints and wins.
+
+#the league points are generally uniform values from 0 to 100 (we saw it before)
+
+# leaguePoints
+LP = sample(0:100, size = 1500, replace = TRUE )
+
+#Now the tier that can be assumed uniform since we created ourselfes the dataset!!!!
+# We would like tr <- c('IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'DIAMOND')
+#but for semplicity we write, remembering that it will not matter the value for us
+#just a programming ease
+tr <- c(1,2,3,4,5,6)
+tier = sample(tr, 1500, replace = TRUE)
+
+
+a1tiers <- c()
+
+#initialize the parameters
+for(i in 1:length(tr)){
+  
+    a1tiers <- c(a1tiers, runif(1,min = i, i*3 ))
+  
+    }
+a1Lp <- 0.02
+#now I simulate the wins
+Wins <- c()
+for( i in 1:1500){
+  h <- -1
+  while(h <0 ){
+    h <- rdexp(1, 0.8, 50 + a1tiers[tier[i]]+a1Lp*LP[i])}
+  
+  Wins = c(Wins, h)
+
+}
+length(Wins)
+print(a1tiers)
+print(a1Lp)
+
+
+#Now i have simulated LP, Tier and Wins, We are ready to test our model!!!!!!!!
+
+#We used this formula because as the tier goes  up, also teh distirbution goes to the right (more games) and so show the adaptatioin of the location of the double exp based on the elo. for the LP they make a little difference, but still more LP results usually in likely more wins
+```
+Let's visualize a little what we simulated in respected to the real data
+```{r}
+
+hist(LeagueData$wins, 
+     breaks = 100, 
+     prob = TRUE, 
+     main = "Wins density vs a ...l!", 
+     xlab = "Wins")
+
+## Sample density
+lines(density(LeagueData$wins), col="red")
+
+## Theoretical normal density
+lines(density(Wins), col="Blue")
+
+legend("topright", c("Wins", "Simulated ddexp data"), 
+       bty = "n", lty = c(1,2), col = c("red", "blue"))
+
+#I would say the plot (with only 1500 points) is not so bad!
+```
+
+### Let's do the inference with ddexp!
+
+
+Now we will our first model, based on a double exponential likelihood.
+
+
+We will now start a long analysis in which we will define similar or particular models for every Likelihood assumption, examining first if the likelihood in exam is worth our attention.
+
+```{r}
+
+# MCMC inference ----------------------------------------------------------
+#N <- 1500 #num of simulations length(Wins)
+# Writing model for jags
+
+set.seed(123)
+model <- function() {
+  # Likelihood
+  for(i in 1:N)
+  {
+    #for now we leave that 0.8 as location and 50 as term into the rate, we will try some more model to see the DIC on it
+    Wins[i]  ~ ddexp( 0.8 , 50 + a1[i])
+    
+    a1[i] <- a1tiers[tier[i]]+a1Lp*LP[i]
+
+  }
+  
+  # Priors
+
+  a1Lp ~ dunif(0, 0.05)
+
+  for (i in 1 : tierstypes)
+  {
+    a1tiers[i] ~ dunif(i, i*3 ) #as explained we want it to grow with the rank
+  }
+  
+}
+
+# Preparing data for JAGS
+#just a redeclaration!
+Wins2 <- Wins
+LP2 <- LP
+tier2 <- tier
+#tr2 <- c('IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'DIAMOND')
+N2 <- length(Wins)
+tierstypes2 <- length(tr)
+
+dat.jags <- list(Wins = Wins2, LP = LP2, tier = tier2, N = N2, tierstypes = tierstypes2)
+
+# Defining parameters of interest
+mod.params <- c( 'a1tiers', 'a1Lp') #for now only 2
+
+# Starting values
+
+mod.inits <- function(){
+  list( 
+        'a1tiers' = runif(6, 3, 3 ),
+        'a1Lp' = runif(1,0, 0.9))
+        
+}
+```
+
+
+
+
+
+```{r}
+set.seed(123)
+mod.fit <- jags(data = dat.jags,                                    # DATA
+                model.file = model, #inits = mod.inits,          # MODEL
+                parameters.to.save = mod.params,                  
+                n.chains = 3, n.iter = 9000, n.burnin = 1000, n.thin=10)  
+
+#Autocorrelation produces clumpy samples that are unrepresentative, in the short run, of the true underlying posterior distribution. Therefore, if #possible, we would like to get rid of autocorrelation so that the MCMC sample provides a more precise estimate of the posterior sample. One way #to decrease autocorrelation is to thin the sample, using only every nth step.
+```
+
+```{r}
+mod.fit
+mod.fit$BUGSoutput$summary
+```
+So in this case the model seems decend, even if the parameters are not exactly the same as before, let's try a model2, alwasy with the same likelihood.
+
+TO BE NOTED that simulating more in this case with a lot of data, and working more with the thin param, we can obtain a better DIC, that in any case is an informative parameter to comparate different models!
+
+```{r}
+model2 <- function() {
+  # Likelihood
+  for(i in 1:N)
+  {
+    #for now we leave that a new parameter instead of 0.8 as location and another as 50 as term into the rate
+    Wins[i]  ~ ddexp( loc, 50 + a1[i])# a1[i])#, a2[i])
+    
+    a1[i] <- a1tiers[tier[i]]+a1Lp*LP[i]
+
+  }
+  
+  # Priors
+
+  a1Lp ~ dunif(0, 0.05)
+  loc ~ dnorm(0.8, 0.5)
+  for (i in 1 : tierstypes)
+  {
+    a1tiers[i] ~ dunif(i, i*3 ) #as explained we want it to grow with the rank
+  }
+  
+}
+
+mod.params2 <- c( 'a1tiers', 'a1Lp', 'loc')
+```
+
+```{r}
+set.seed(123)
+mod.fit <- jags(data = dat.jags,                                    # DATA
+                model.file = model2, #inits = mod.inits,          # MODEL
+                parameters.to.save = mod.params2,                  
+                n.chains = 3, n.iter = 9000, n.burnin = 1000, n.thin=10)  
+
+#Autocorrelation produces clumpy samples that are unrepresentative, in the short run, of the true underlying posterior distribution. Therefore, if #possible, we would like to get rid of autocorrelation so that the MCMC sample provides a more precise estimate of the posterior sample. One way #to decrease autocorrelation is to thin the sample, using only every nth step.
+
+
+mod.fit
+mod.fit$BUGSoutput$summary
+
+```
+This model is clearly better than the previous one!
+Let's see another because we are not quite so happy with the parameters still!
+
+```{r}
+set.seed(123)
+model3 <- function() {
+  # Likelihood
+  for(i in 1:N)
+  {
+    #for now we leave that a new parameter instead of 0.8 as location and another as 50 as term into the rate
+    Wins[i]  ~ ddexp( loc, rateBase + a1[i])
+    
+    a1[i] <- a1tiers[tier[i]]+a1Lp*LP[i]
+
+  }
+  
+  # Priors
+
+  a1Lp ~ dunif(0, 0.05)
+  loc ~ dnorm(0.8, 0.5)
+  rateBase ~ dnorm(50, 0.5)
+  for (i in 1 : tierstypes)
+  {
+    a1tiers[i] ~ dunif(i, i*3 ) #as explained we want it to grow with the rank
+  }
+  
+}
+mod.params3 <- c( 'a1tiers', 'a1Lp', 'loc', 'rateBase')
+
+mod.fit <- jags(data = dat.jags,                                    # DATA
+                model.file = model3, #inits = mod.inits,          # MODEL
+                parameters.to.save = mod.params3,                  
+                n.chains = 3, n.iter = 9000, n.burnin = 1000, n.thin=10)  
+
+#Autocorrelation produces clumpy samples that are unrepresentative, in the short run, of the true underlying posterior distribution. Therefore, if #possible, we would like to get rid of autocorrelation so that the MCMC sample provides a more precise estimate of the posterior sample. One way #to decrease autocorrelation is to thin the sample, using only every nth step.
+
+
+mod.fit
+mod.fit$BUGSoutput$summary
+```
+This model is by far the best, but if we look better the n.eff for some parameters is very low, this means that generally we have problems of autocorrelation! so when we will test on our real data we will have to play more with the think factor and probably with more chains!
+
+## Model assuming Likelihood as a Exponential
+```{r Data Simulation18}
+
+#So for now we have to simulate the losses, leaguePoints and wins.
+set.seed(123)
+#the league points are generally uniform values from 0 to 100 (we saw it before)
+
+# leaguePoints
+LP = sample(0:100, size = 1500, replace = TRUE )
+
+#Now the tier that can be assumed uniform since we created ourselfes the dataset!!!!
+# We would like tr <- c('IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'DIAMOND')
+#but for semplicity we write, remembering that it will not matter the value for us
+#just a programming ease
+tr <- c(1,2,3,4,5,6)
+tier = sample(tr, 1500, replace = TRUE)
+
+
+#The kind of formulAS we want are the following
+
+a1tiers <- c()
+
+#initialize the parameters
+for(i in 1:length(tr)){
+  
+    a1tiers <- c(a1tiers, rnorm(1,i, i ))
+  
+    }
+
+a1Lp <- 0.0002
+
+#now I simulate the wins
+Wins <- c()
+for( i in 1:1500){
+  h <- -1
+  while(h < 0 ){
+    h <- rexp(1, rate = abs(0.3/(a1tiers[tier[i]]+(a1Lp*LP[i]))^2))} 
+  #print(h)
+  
+  Wins = c(Wins, h)
+
+}
+length(Wins)
+print(a1tiers)
+print(a1Lp)
+
+
+#Now i have simulated LP, Tier and Wins, We are ready to test our model!!!!!!!!
+
+#We used this formula because as the tier goes  up, also teh distirbution goes to the right (more games) and so show the adaptatioin of the location of the exp based on the elo. for the LP they make a little difference, but still more LP results usually in likely more wins
+```
+
+
+Let's visualize a little what we simulated in respected to the real data
+```{r}
+hist(LeagueData$wins, 
+     breaks = 100, 
+     prob = TRUE, 
+     main = "Wins density vs a exponential!", 
+     xlab = "Wins")
+
+## Sample density
+lines(density(LeagueData$wins), col="red")
+
+## Theoretical normal density
+lines(density(Wins), col="Blue")
+
+legend("topright", c("Wins", "Simulated exp data"), 
+       bty = "n", lty = c(1,2), col = c("red", "blue"))
+
+#I would say the plot (with only 1500 points) is not so bad!
+```
+
+Well this curve fits not very well, but can alwasy be our error, so let's give it a shot with some models!
+
+
+### Models with Exponential Likelihood
+
+
+```{r}
+set.seed(123)
+#call it model4 since is the 4th of our project!
+
+model4 <- function() {
+  # Likelihood
+  for(i in 1:N)
+  {
+    #for now we just leave the rate parameters as in simulation as dependence
+    Wins[i]  ~ dexp( a1[i])# a1[i])#, a2[i])
+    
+    a1[i] <- (0.3/(a1tiers[tier[i]]+(a1Lp*LP[i]))^2)
+
+  }
+  
+  # Priors
+
+  a1Lp ~ dunif(0, 0.05)
+  for (i in 1 : tierstypes)
+  {
+    a1tiers[i] ~ dnorm(i, i ) #as explained we want it to grow with the rank
+  }
+  
+}
+
+Wins2 <- Wins
+LP2 <- LP
+tier2 <- tier
+#tr2 <- c('IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'DIAMOND')
+N2 <- length(Wins)
+tierstypes2 <- length(tr)
+
+dat.jags <- list(Wins = Wins2, LP = LP2, tier = tier2, N = N2, tierstypes = tierstypes2)
+
+
+
+mod.params4 <- c( 'a1tiers', 'a1Lp')
+
+mod.fit <- jags(data = dat.jags,                                    # DATA
+                model.file = model4, #inits = mod.inits,          # MODEL
+                parameters.to.save = mod.params4,                  
+                n.chains = 3, n.iter = 9000, n.burnin = 1000, n.thin=10)  
+
+#Autocorrelation produces clumpy samples that are unrepresentative, in the short run, of the true underlying posterior distribution. Therefore, if #possible, we would like to get rid of autocorrelation so that the MCMC sample provides a more precise estimate of the posterior sample. One way #to decrease autocorrelation is to thin the sample, using only every nth step.
+
+
+mod.fit
+mod.fit$BUGSoutput$summary
+```
+This is a pretty nice result, since is the first time we get a decent n.eff and a very good DIC, let's try to move a little the model, adding a parameter! The problem is that the parameters are not quite right but in our defense we have that they came from normal distributions, and if we look better in the disteribution they are quite near the real values!
+
+```{r}
+set.seed(123)
+#call it model5 since is the 5th of our project!
+
+model5 <- function() {
+  # Likelihood
+  for(i in 1:N)
+  {
+    #for now we just leave the rate parameters as in simulation as dependence
+    Wins[i]  ~ dexp( a1[i])
+    
+    a1[i] <- (base/(a1tiers[tier[i]]+(a1Lp*LP[i]))^2)
+
+  }
+  
+  # Priors
+  base ~ dunif(0.2, 0.6)
+  a1Lp ~ dunif(0, 0.05)
+  for (i in 1 : tierstypes)
+  {
+    a1tiers[i] ~ dnorm(i, i ) #as explained we want it to grow with the rank
+  }
+  
+}
+mod.params5 <- c( 'a1tiers', 'a1Lp', 'base')
+
+mod.fit <- jags(data = dat.jags,                                    # DATA
+                model.file = model5, #inits = mod.inits,          # MODEL
+                parameters.to.save = mod.params5,                  
+                n.chains = 3, n.iter = 9000, n.burnin = 1000, n.thin=10)  
+
+#Autocorrelation produces clumpy samples that are unrepresentative, in the short run, of the true underlying posterior distribution. Therefore, if #possible, we would like to get rid of autocorrelation so that the MCMC sample provides a more precise estimate of the posterior sample. One way #to decrease autocorrelation is to thin the sample, using only every nth step.
+
+
+mod.fit
+mod.fit$BUGSoutput$summary
+```
+
+So the two models are quite similar, still we would prefer the second because even if has more parameters (more comutational time) has a less pD and less DIC!
+
+Now let's go with another likelihood!
+
+
+
+
+## Model assuming Likelihood as a F-Distribution
+```{r Data Simulation19}
+
+#So for now we have to simulate the losses, leaguePoints and wins.
+set.seed(123)
+#the league points are generally uniform values from 0 to 100 (we saw it before)
+
+# leaguePoints
+LP = sample(0:100, size = 1500, replace = TRUE )
+
+#Now the tier that can be assumed uniform since we created ourselfes the dataset!!!!
+# We would like tr <- c('IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'DIAMOND')
+#but for semplicity we write, remembering that it will not matter the value for us
+#just a programming ease
+tr <- c(1,2,3,4,5,6)
+tier = sample(tr, 1500, replace = TRUE)
+
+
+#The kind of formulAS we want are the following
+# sd = sdLp*LP + sdtier['tier of the player']
+
+a1tiers <- c()
+
+#initialize the parameters
+for(i in 1:length(tr)){
+
+    a1tiers <- c(a1tiers, rnorm(1,i, i ))
+
+    }
+
+a1Lp <- 0.0002
+
+#now I simulate the wins
+Wins <- c()
+for( i in 1:1500){
+  h <- -1
+  while(h < 0 ){
+    h <- rf(1,9, 2) # i usually check with number first, and we didn't get a good match :()
+   # h <- rexp(1, rate = abs(0.3/(a1tiers[tier[i]]+(a1Lp*LP[i]))^2))
+    } #0.012
+  
+  Wins = c(Wins, h)
+
+}
+length(Wins)
+print(a1tiers)
+print(a1Lp)
+
+
+#Now i have simulated LP, Tier and Wins, We are ready to test our model!!!!!!!!
+
+#We used this formula because as the tier goes  up, also teh distirbution goes to the right (more games) and so show the adaptatioin of the location of the F-distr based on the elo. for the LP they make a little difference, but still more LP results usually in likely more wins
+```
+
+Let's visualize a little what we simulated in respected to the real data
+```{r}
+
+hist(LeagueData$wins, 
+     breaks = 100, 
+     prob = TRUE, 
+     main = "Wins density vs a F-distr!", 
+     xlab = "Wins")
+
+## Sample density
+lines(density(LeagueData$wins), col="red")
+
+## Theoretical normal density
+lines(density(Wins), col="Blue")
+
+legend("topright", c("Wins", "Simulated F-distr data"), 
+       bty = "n", lty = c(1,2), col = c("red", "blue"))
+
+#I would say the plot (with only 1500 points) is not so bad!
+```
+I tried in many ways, combinations of F dis, it seems thai distribution does not fit well our data, so we will not procede to develop a model with it, we go no to the Gamma. 
+
+## Model assuming Likelihood as a Gamma 
+```{r Data Simulation16}
+
+#So for now we have to simulate the losses, leaguePoints and wins.
+set.seed(123)
+#the league points are generally uniform values from 0 to 100 (we saw it before)
+
+# leaguePoints
+LP = sample(0:100, size = 1500, replace = TRUE )
+
+#Now the tier that can be assumed uniform since we created ourselfes the dataset!!!!
+# We would like tr <- c('IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'DIAMOND')
+#but for semplicity we write, remembering that it will not matter the value for us
+#just a programming ease
+tr <- c(1,2,3,4,5,6)
+tier = sample(tr, 1500, replace = TRUE)
+
+
+#The kind of formulAS we want are the following
+
+a1tiers <- c()
+
+#initialize the parameters
+for(i in 1:length(tr)){
+  #  sdtiers <- c(sdtiers, runif(1,min = i, i+5 ))
+    a1tiers <- c(a1tiers, rnorm(1,20, i/3 ))
+  #  a2tiers <- c(a2tiers, runif(1,min = i, i+0.2 ))
+    }
+
+#now I simulate the wins
+Wins <- c()
+for( i in 1:1500){
+  h <- -1
+  while(h < 0 ){
+
+     h <-  rgamma(1, shape = 101/(LP[i]+1), scale = (a1tiers[tier[i]]))
+
+    } #0.012
+
+  Wins = c(Wins, h)
+}
+length(Wins)
+print(a1tiers)
+#Now i have simulated LP, Tier and Wins, We are ready to test our model!!!!!!!!
+
+#We used this formula because as the tier goes  up, also teh distirbution goes to the right (more games) and so show the adaptatioin of the location of the double exp based on the elo. for the LP they make a little difference, but still more LP results usually in likely more wins
+```
+
+Let's visualize a little what we simulated in respected to the real data
+```{r}
+
+hist(LeagueData$wins, 
+     breaks = 100, 
+     prob = TRUE, 
+     main = "Wins density vs Gamma Density!", 
+     xlab = "Wins")
+
+## Sample density
+lines(density(LeagueData$wins), col="red")
+
+## Theoretical normal density
+lines(density(Wins), col="Blue")
+
+legend("topright", c("Wins", "Simulated Gamma data"), 
+       bty = "n", lty = c(1,2), col = c("red", "blue"))
+
+#I would say the plot (with only 1500 points) is not so bad!
+```
+We see that actually we can approximate decently our data, so we procede with some models!
+
+```{r}
+set.seed(123)
+#call it model6 since is the 6th of our project!
+
+model6 <- function() {
+  # Likelihood
+  for(i in 1:N)
+  {
+    #for now we just leave the rate parameters as in simulation as dependence
+    Wins[i]  ~ dgamma( shape[i], scale[i])
+    
+    shape[i] <- base/(LP[i]+1)
+    scale[i] <- a1tiers[tier[i]]
+
+  }
+  
+  # Priors
+  base ~ dunif(101, 105)
+  for (i in 1 : tierstypes)
+  {
+    a1tiers[i] ~ dnorm(20, i/3 ) #as explained we want it to grow with the rank
+  }
+  
+}
+
+
+Wins2 <- Wins
+LP2 <- LP
+tier2 <- tier
+#tr2 <- c('IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'DIAMOND')
+N2 <- length(Wins)
+tierstypes2 <- length(tr)
+
+dat.jags <- list(Wins = Wins2, LP = LP2, tier = tier2, N = N2, tierstypes = tierstypes2)
+
+mod.params6 <- c( 'a1tiers','base')
+
+mod.fit <- jags(data = dat.jags,                                    # DATA
+                model.file = model6, #inits = mod.inits,          # MODEL
+                parameters.to.save = mod.params6,                  
+                n.chains = 3, n.iter = 9000, n.burnin = 1000, n.thin=10)  
+
+#Autocorrelation produces clumpy samples that are unrepresentative, in the short run, of the true underlying posterior distribution. Therefore, if #possible, we would like to get rid of autocorrelation so that the MCMC sample provides a more precise estimate of the posterior sample. One way #to decrease autocorrelation is to thin the sample, using only every nth step.
+
+
+mod.fit
+mod.fit$BUGSoutput$summary
+```
+
+Is not bad even if our a1tiers are pretty far from the true ones! But let's try to free some more paramters.
+Let's try something different
+```{r}
+set.seed(123)
+#call it model7 since is the 7th of our project!
+
+model7 <- function() {
+  # Likelihood
+  for(i in 1:N)
+  {
+    #for now we just leave the rate parameters as in simulation as dependence
+    Wins[i]  ~ dgamma( shape[i], scale[i])
+    
+    shape[i] <- base/(LP[i]+alpha)
+    scale[i] <- a1tiers[tier[i]]
+
+  }
+  
+  # Priors
+  alpha ~ dunif(0.9, 1.3)
+  base ~ dunif(101, 105)
+  for (i in 1 : tierstypes)
+  {
+    a1tiers[i] ~ dunif(20-i/3,  20 + i/3 ) #as explained we want it to grow with the rank
+  }
+  
+}
+
+
+mod.params7 <- c( 'a1tiers','base', 'alpha')
+
+mod.fit <- jags(data = dat.jags,                                    # DATA
+                model.file = model7, #inits = mod.inits,          # MODEL
+                parameters.to.save = mod.params7,                  
+                n.chains = 3, n.iter = 9000, n.burnin = 1000, n.thin=10)  
+
+#Autocorrelation produces clumpy samples that are unrepresentative, in the short run, of the true underlying posterior distribution. Therefore, if #possible, we would like to get rid of autocorrelation so that the MCMC sample provides a more precise estimate of the posterior sample. One way #to decrease autocorrelation is to thin the sample, using only every nth step.
+
+
+mod.fit
+mod.fit$BUGSoutput$summary
+
+```
+
+This time we have almost perfect parameters prediction, but a high DIC, so the model is still in consideration but could be improved!
+Let's try a last chance!
+
+```{r}
+set.seed(123)
+#call it model8 since is the 8th of our project!
+
+model8 <- function() {
+  # Likelihood
+  for(i in 1:N)
+  {
+    #for now we just leave the rate parameters as in simulation as dependence
+    Wins[i]  ~ dgamma( shape[i], scale[i])
+    
+    shape[i] <- base/(LP[i]+1)
+    scale[i] <- a1tiers[tier[i]]
+
+  }
+  
+  # Priors
+  base ~ dunif(101, 105)
+  for (i in 1 : tierstypes)
+  {
+    a1tiers[i] ~ dunif(20-i/3,  20 + i/3 ) #as explained we want it to grow with the rank
+  }
+  
+}
+
+
+mod.params8 <- c( 'a1tiers','base')
+
+mod.fit <- jags(data = dat.jags,                                    # DATA
+                model.file = model8, #inits = mod.inits,          # MODEL
+                parameters.to.save = mod.params8,                  
+                n.chains = 3, n.iter = 9000, n.burnin = 1000, n.thin=10)  
+
+#Autocorrelation produces clumpy samples that are unrepresentative, in the short run, of the true underlying posterior distribution. Therefore, if #possible, we would like to get rid of autocorrelation so that the MCMC sample provides a more precise estimate of the posterior sample. One way #to decrease autocorrelation is to thin the sample, using only every nth step.
+
+
+mod.fit
+mod.fit$BUGSoutput$summary
+
+```
+Still very high DIC:(
+Remains the Weibull.
+
+
+
+## Model assuming Likelihood as a Weibull distribution 
+```{r Data Simulation17}
+
+#So for now we have to simulate the losses, leaguePoints and wins.
+set.seed(123)
+#the league points are generally uniform values from 0 to 100 (we saw it before)
+
+# leaguePoints
+LP = sample(0:100, size = 1500, replace = TRUE )
+
+#Now the tier that can be assumed uniform since we created ourselfes the dataset!!!!
+# We would like tr <- c('IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'DIAMOND')
+#but for semplicity we write, remembering that it will not matter the value for us
+#just a programming ease
+tr <- c(1,2,3,4,5,6)
+tier = sample(tr, 1500, replace = TRUE)
+
+
+#The kind of formulAS we want are the following
+# sd = sdLp*LP + sdtier['tier of the player']
+a1tiers <- c()
+#initialize the parameters
+for(i in 1:length(tr)){
+
+    a1tiers <- c(a1tiers, runif(1,0.8-1/i^2, 0.9+1/i^2 ))
+
+    }
+
+#now I simulate the wins
+Wins <- c()
+for( i in 1:1500){
+  h <- -1
+  while(h < 0 ){
+     h <-  rweibull(1, shape = a1tiers[tier[i]], scale = LP[i]/100 + (100-LP[i]))
+    } #0.012
+  
+  
+  Wins = c(Wins, h)
+
+}
+length(Wins)
+print(a1tiers)
+#print(a1Lp)
+
+
+#Now i have simulated LP, Tier and Wins, We are ready to test our model!!!!!!!!
+
+#We used this formula because as the tier goes  up, also teh distirbution goes to the right (more games) and so show the adaptatioin of the location of the double exp based on the elo. for the LP they make a little difference, but still more LP results usually in likely more wins
+
+
+#Let's visualize a little what we simulated in respected to the real data
+
+hist(LeagueData$wins, 
+     breaks = 100, 
+     prob = TRUE, 
+     main = "Wins density vs Weibull!", 
+     xlab = "Wins")
+
+## Sample density
+lines(density(LeagueData$wins), col="red")
+
+## Theoretical normal density
+lines(density(Wins), col="Blue")
+
+legend("topright", c("Wins", "Simulated Weibull data"), 
+       bty = "n", lty = c(1,2), col = c("red", "blue"))
+
+#I would say the plot (with only 1500 points) is not so bad!
+```
+
+We see that for rweibull(1, shape = 0.8, scale = 100) it fits almost perfectly!!!
+
+So let's go with the models!
+
+```{r}
+set.seed(123)
+#call it model9 since is the 9th of our project!
+
+model9 <- function() {
+  # Likelihood
+  for(i in 1:N)
+  {
+    Wins[i]  ~ dweibull( shape[i], scale[i])
+
+    shape[i] <- a1tiers[tier[i]]
+    scale[i] <-  LP[i]/alpha + (alpha-LP[i])
+
+  }
+  # Priors
+  alpha ~ dunif(95, 105)
+  for (i in 1 : tierstypes)
+  {
+    a1tiers[i] ~ dunif(0.8-1/i^2, 0.9+1/i^2 ) #as explained we want it to grow with the rank
+  }
+  
+}
+
+
+Wins2 <- Wins
+LP2 <- LP
+tier2 <- tier
+#tr2 <- c('IRON', 'BRONZE', 'SILVER', 'GOLD', 'PLATINUM', 'DIAMOND')
+N2 <- length(Wins)
+tierstypes2 <- length(tr)
+
+dat.jags <- list(Wins = Wins2, LP = LP2, tier = tier2, N = N2, tierstypes = tierstypes2)
+
+mod.params9 <- c( 'a1tiers','alpha')
+
+mod.fit <- jags(data = dat.jags,                                    # DATA
+                model.file = model9, #inits = mod.inits,          # MODEL
+                parameters.to.save = mod.params9,                  
+                n.chains = 3, n.iter = 9000, n.burnin = 1000, n.thin=10)  
+
+#Autocorrelation produces clumpy samples that are unrepresentative, in the short run, of the true underlying posterior distribution. Therefore, if #possible, we would like to get rid of autocorrelation so that the MCMC sample provides a more precise estimate of the posterior sample. One way #to decrease autocorrelation is to thin the sample, using only every nth step.
+
+
+mod.fit
+mod.fit$BUGSoutput$summary
+```
+
+
+The DIC is extremely high, still the model seems correct.
+
+
+Now is time to take the real data, test the best models and decide which has less DIC, studying a little its diagnostics to be sure of our results!!!!!
+
+# Test of the best models on our real Data
+
+## Data loading!
+```{r load data1}
+set.seed(123)
+LeagueData <- read.csv("ProjectFinaldataLeagueofLegends.csv")
+#Let's first drop the column X since we already have automatic indexes
+LeagueData = subset(LeagueData, select = -c(X) )
+head(LeagueData)
+```
+We want now to map the ranks with integers from 1 to 6 as in our models, and prepare everything for jags!!!
+
+```{r cata preparation}
+#Change every IRON ->1, BRONZE->2 etc
+Changer <- function(LeagueData_tier){
+ChangedTier <- c()
+for(i in LeagueData_tier){
+  if(i == 'IRON'){
+    ChangedTier <- c(ChangedTier, 1)
+    
+  }
+  else if(i == 'BRONZE') {
+    ChangedTier <- c(ChangedTier, 2)
+  }
+  else if(i == 'SILVER'){
+    ChangedTier <- c(ChangedTier, 3)
+    }
+  else if(i == 'GOLD'){
+    ChangedTier <- c(ChangedTier, 4)
+  }
+  else if(i == 'PLATINUM'){
+    ChangedTier <- c(ChangedTier, 5)
+  }
+  else if(i == 'DIAMOND'){
+    ChangedTier <- c(ChangedTier, 6)
+  }
+}
+return(ChangedTier)
+}
+
+```
+
+
+## Test the models!
+So what models will we test in this Monster Dataset?
+For the double exponential likelihood the best model was model3.
+For exponential likelihood the best model was model5.
+For F distribution we decided to not go further.
+For Gamma likelihood the best was model7.
+For the Weibull likelihood we have model9.
+
+Let's remember that some of them presented high DIC or low n.eff, we hope to ajust it with a long sampling and thinning!
+
+Now we will see the model3, and depending on how long will take we will test some of the others!
+
+
+WELL WE HAVE TO SAY NICE TRY, BUT!!!!!!
+The data is too huge and my the inizialization of the Markov Chain is taking too much, so, preserving the inner structure of the data and the same number of observations for every rank we will have to reduce the dataset!!!
+instead of more than 100k obs, let's go dow to around 10k.
+Let's reduce our data!
+
+
+
+```{r}
+#we have to take 1500 for every rank!
+#so we make a copy of our dataset, and we drop lines!
+COPY<-data.frame(LeagueData)
+head(COPY)
+#Indexes <- c()
+Iron <- which(COPY$tier == 'IRON')[1:1050]
+Bronze <-which(COPY$tier == 'BRONZE')[1:1050]
+Silver <-which(COPY$tier == 'SILVER')[1:1050]
+Gold <-which(COPY$tier == 'GOLD')[1:1050]
+Platinum <-which(COPY$tier == 'PLATINUM')[1:1050]
+Diamond <- which(COPY$tier == 'DIAMOND')[1:1050]
+Indexes<- c(Iron, Bronze, Silver, Gold, Platinum, Diamond)
+head(COPY[Indexes,] ) #That's the subset
+COPY2 <- COPY[Indexes,]
+
+#check the plot 
+hist(COPY2$wins, 
+     breaks = 100, 
+     prob = TRUE, 
+     main = "Wins density!", 
+     xlab = "Wins")
+
+## Sample density
+lines(density(COPY2$wins), col="red") #kinda perfectly as before ehehe
+tier2 <- Changer(COPY2$tier)
+```
+
+
+```{r}
+set.seed(123)
+
+
+Wins2 <- COPY2$wins
+LP2 <- COPY2$leaguePoints
+tier2 <- tier2
+N2 <- length(Wins2)
+tierstypes2 <- 6 #number of tiers
+
+dat.jags <- list(Wins = Wins2, LP = LP2, tier = tier2, N = N2, tierstypes = tierstypes2)
+```
+
+```{r}
+model3 <- function() {
+  # Likelihood
+  for(i in 1:N)
+  {
+    #for now we leave that a new parameter instead of 0.8 as location and another as 50 as term into the rate
+    Wins[i]  ~ ddexp( loc, rateBase + a1[i])# a1[i])#, a2[i])
+    
+    a1[i] <- a1tiers[tier[i]]+a1Lp*LP[i]
+
+  }
+  
+  # Priors
+
+  a1Lp ~ dunif(0, 0.05)
+  loc ~ dnorm(0.8, 0.5)
+  rateBase ~ dnorm(50, 0.5)
+  for (i in 1 : tierstypes)
+  {
+    a1tiers[i] ~ dunif(i, i*3 ) #as explained we want it to grow with the rank
+  }
+  
+}
+mod.params3 <- c( 'a1tiers', 'a1Lp', 'loc', 'rateBase')
+
+mod.fit <- jags(data = dat.jags,                                    # DATA
+                model.file = model3, #inits = mod.inits,          # MODEL
+                parameters.to.save = mod.params3,                  
+                n.chains = 3, n.iter = 9000, n.burnin = 1000, n.thin=10)  
+
+#Autocorrelation produces clumpy samples that are unrepresentative, in the short run, of the true underlying posterior distribution. Therefore, if #possible, we would like to get rid of autocorrelation so that the MCMC sample provides a more precise estimate of the posterior sample. One way #to decrease autocorrelation is to thin the sample, using only every nth step.
+
+
+mod.fit
+mod.fit$BUGSoutput$summary
+```
+It has a very high DIC, but still the Rhat are pretty good, even if the n.eff seems to be pretty bad, let's see another model before crying! Let's remember that the  I will run the'best' a little more to see where we can go.
+
+```{r Exponential Likelihood best model}
+set.seed(123)
+#call it model5 since is the 5th of our project!
+
+model5 <- function() {
+  # Likelihood
+  for(i in 1:N)
+  {
+    #for now we just leave the rate parameters as in simulation as dependence
+    Wins[i]  ~ dexp( a1[i])
+    
+    a1[i] <- (base/(a1tiers[tier[i]]+(a1Lp*LP[i]))^2)
+
+  }
+  
+  # Priors
+  base ~ dunif(0.2, 0.6)
+  a1Lp ~ dunif(0, 0.05)
+  for (i in 1 : tierstypes)
+  {
+    a1tiers[i] ~ dnorm(i, i ) #as explained we want it to grow with the rank
+  }
+  
+}
+mod.params5 <- c( 'a1tiers', 'a1Lp', 'base')
+
+mod.fit <- jags(data = dat.jags,                                    # DATA
+                model.file = model5, #inits = mod.inits,          # MODEL
+                parameters.to.save = mod.params5,                  
+                n.chains = 3, n.iter = 9000, n.burnin = 1000, n.thin=10)  
+
+#Autocorrelation produces clumpy samples that are unrepresentative, in the short run, of the true underlying posterior distribution. Therefore, if #possible, we would like to get rid of autocorrelation so that the MCMC sample provides a more precise estimate of the posterior sample. One way #to decrease autocorrelation is to thin the sample, using only every nth step.
+
+
+mod.fit
+mod.fit$BUGSoutput$summary
+```
+This is performing much better!!!!!!!!! We have hopeeeee
+
+As this model further will result the best, we will also do a little more for it, let's do an Hypothesis testing, and see if the LP really matter!
+
+We will assume as H0 that the LP matters, and H1 that the LP do not have relevance in the wins computation.
+
+```{r}
+chainMat<- mod.fit$BUGSoutput$sims.matrix
+cred <- 0.90
+(beta.ET.jags <- apply(chainMat, 2, quantile, prob=c((1-cred)/2, 1-(1-cred)/2)))
+
+```
+So it seems that our a1Lp does not touch zero so is a parameters that should be considered, since it's relevant!
+
+
+To the the Gamma we know that we can't allow 0 as a value, so the model will be partial but we can't use it otherwise.
+
+```{r best models for Gamma and Weibull without players at 0LP}
+
+
+
+#we have to take 1500 for every rank!
+#so we make a copy of our dataset, and we drop lines!
+COPY<-data.frame(LeagueData)
+head(COPY)
+Iron <- which(COPY$tier == 'IRON'& COPY$leaguePoints > 0)[1:1050]
+Bronze <-which(COPY$tier == 'BRONZE'& COPY$leaguePoints > 0)[1:1050]
+Silver <-which(COPY$tier == 'SILVER'& COPY$leaguePoints > 0)[1:1050]
+Gold <-which(COPY$tier == 'GOLD'& COPY$leaguePoints > 0)[1:1050]
+Platinum <-which(COPY$tier == 'PLATINUM'& COPY$leaguePoints > 0)[1:1050]
+Diamond <- which(COPY$tier == 'DIAMOND'& COPY$leaguePoints > 0)[1:1050]
+Indexes<- c(Iron, Bronze, Silver, Gold, Platinum, Diamond)
+head(COPY[Indexes,] ) #That's the subset
+COPY2 <- COPY[Indexes,]
+
+#check the plot 
+hist(COPY2$wins, 
+     breaks = 100, 
+     prob = TRUE, 
+     main = "Wins density!", 
+     xlab = "Wins")
+
+## Sample density
+lines(density(COPY2$wins), col="red") #kinda perfectly as before ehehe
+tier2 <- Changer(COPY2$tier)
+
+
+Wins2 <- COPY2$wins
+LP2 <- COPY2$leaguePoints
+tier2 <- tier2
+N2 <- length(Wins2)
+tierstypes2 <- 6 #number of tiers
+
+dat.jags <- list(Wins = Wins2, LP = LP2, tier = tier2, N = N2, tierstypes = tierstypes2)
+
+```
+
+
+
+
+```{r Gamma Likelihood best model}
+set.seed(123)
+#call it model5 since is the 4th of our project!
+
+model7 <- function() {
+  # Likelihood
+  for(i in 1:N)
+  {
+    #for now we just leave the rate parameters as in simulation as dependence
+    Wins[i]  ~ dgamma( shape[i], scale[i]) 
+    
+    shape[i] <- (base/(LP[i]+alpha))
+    scale[i] <- (a1tiers[tier[i]])
+
+  }
+  
+  # Priors
+  
+  alpha ~ dunif(0.9, 1.3)
+  base ~ dunif(101, 105)
+  for (i in 1 : tierstypes)
+  {
+    a1tiers[i] ~ dunif(20-i/3,  20 + i/3 ) #as explained we want it to grow with the rank
+  }
+  
+}
+
+
+mod.params7 <- c( 'a1tiers','base', 'alpha')
+
+mod.fit <- jags(data = dat.jags,                                    # DATA
+                model.file = model7, #inits = mod.inits,          # MODEL
+                parameters.to.save = mod.params7,                  
+                n.chains = 3, n.iter = 9000, n.burnin = 1000, n.thin=10)  
+
+#Autocorrelation produces clumpy samples that are unrepresentative, in the short run, of the true underlying posterior distribution. Therefore, if #possible, we would like to get rid of autocorrelation so that the MCMC sample provides a more precise estimate of the posterior sample. One way #to decrease autocorrelation is to thin the sample, using only every nth step.
+
+
+mod.fit
+mod.fit$BUGSoutput$summary
+
+```
+
+This DIC is extremely high, symptom of a bad model.
+
+Same story for the Weibull we excluded the 0's.
+
+```{r best model Weibull likelihood}
+set.seed(123)
+#call it model9 since is the 9th of our project!
+
+model9 <- function() {
+  # Likelihood
+  for(i in 1:N)
+  {
+    Wins[i]  ~ dweibull( shape[i], scale[i])
+
+    shape[i] <- a1tiers[tier[i]]
+    scale[i] <-  LP[i]/alpha + (alpha-LP[i])
+
+  }
+  # Priors
+  alpha ~ dunif(95, 105)
+  for (i in 1 : tierstypes)
+  {
+    a1tiers[i] ~ dunif(0.8-1/i^2, 0.9+1/i^2 ) #as explained we want it to grow with the rank
+  }
+  
+}
+
+
+
+mod.params9 <- c( 'a1tiers','alpha')
+
+mod.fit <- jags(data = dat.jags,                                    # DATA
+                model.file = model9, #inits = mod.inits,          # MODEL
+                parameters.to.save = mod.params9,                  
+                n.chains = 3, n.iter = 9000, n.burnin = 1000, n.thin=10)  
+
+#Autocorrelation produces clumpy samples that are unrepresentative, in the short run, of the true underlying posterior distribution. Therefore, if #possible, we would like to get rid of autocorrelation so that the MCMC sample provides a more precise estimate of the posterior sample. One way #to decrease autocorrelation is to thin the sample, using only every nth step.
+
+
+mod.fit
+mod.fit$BUGSoutput$summary
+```
+We already saw a very large DIC before, so probably this model is not well suited!
+## Diagnostics
+So now let's do some diagnostic for the best model, which has been decided is the Exponential! \  
+First we will run it a little more, instead of 9k iter we go with 39k, and we hope to see another improvement on it.
+
+After it we will procede with some diagnostics to assess the quality of the model and the convergence of the parameters.
+
+
+
+```{r Again the data for model5}
+#we have to take 1500 for every rank!
+#so we make a copy of our dataset, and we drop lines!
+COPY<-data.frame(LeagueData)
+head(COPY)
+#Indexes <- c()
+Iron <- which(COPY$tier == 'IRON')[1:1050]
+Bronze <-which(COPY$tier == 'BRONZE')[1:1050]
+Silver <-which(COPY$tier == 'SILVER')[1:1050]
+Gold <-which(COPY$tier == 'GOLD')[1:1050]
+Platinum <-which(COPY$tier == 'PLATINUM')[1:1050]
+Diamond <- which(COPY$tier == 'DIAMOND')[1:1050]
+Indexes<- c(Iron, Bronze, Silver, Gold, Platinum, Diamond)
+head(COPY[Indexes,] ) #That's the subset
+COPY2 <- COPY[Indexes,]
+
+#check the plot 
+hist(COPY2$wins, 
+     breaks = 100, 
+     prob = TRUE, 
+     main = "Wins density!", 
+     xlab = "Wins")
+
+## Sample density
+lines(density(COPY2$wins), col="red") #kinda perfectly as before ehehe
+tier2 <- Changer(COPY2$tier)
+
+
+Wins2 <- COPY2$wins
+LP2 <- COPY2$leaguePoints
+tier2 <- tier2
+N2 <- length(Wins2)
+tierstypes2 <- 6 #number of tiers
+
+dat.jags <- list(Wins = Wins2, LP = LP2, tier = tier2, N = N2, tierstypes = tierstypes2)
+```
+
+This time I had another parameter Wins.rep that will allow us to see better the coverage in the diagnostic!
+```{r Exponential Likelihood best model(Again but better!)}
+set.seed(123)
+#call it model5 since is the 5th of our project!
+
+model5 <- function() {
+  # Likelihood
+  for(i in 1:N)
+  {
+    #for now we just leave the rate parameters as in simulation as dependence
+    Wins[i]  ~ dexp( a1[i])# a1[i])#, a2[i])
+    
+    a1[i] <- (base/(a1tiers[tier[i]]+(a1Lp*LP[i]))^2)
+    
+   # Wins.rep[i] ~ dexp( a1[i])
+  }
+  
+  # Priors
+  base ~ dunif(0.2, 0.6)
+  a1Lp ~ dunif(0, 0.05)
+  for (i in 1 : tierstypes)
+  {
+    a1tiers[i] ~ dnorm(i, i ) #as explained we want it to grow with the rank
+  }
+  
+}
+mod.params5 <- c( 'a1tiers', 'a1Lp', 'base')
+
+mod.fit <- jags(data = dat.jags,                                    # DATA
+                model.file = model5, #inits = mod.inits,          # MODEL
+                parameters.to.save = mod.params5,                  
+                n.chains = 3, n.iter = 39000, n.burnin = 2000, n.thin=10)  
+
+#Autocorrelation produces clumpy samples that are unrepresentative, in the short run, of the true underlying posterior distribution. Therefore, if #possible, we would like to get rid of autocorrelation so that the MCMC sample provides a more precise estimate of the posterior sample. One way #to decrease autocorrelation is to thin the sample, using only every nth step.
+
+
+mod.fit
+mod.fit$BUGSoutput$summary
+```
+Actually the results are almost the same as before, so good news and let's go on!
+
+### Let's procede with the Diagnostic
+
+```{r}
+#here we will see the trace plots on the chanins and their density
+mcmc_lm <- as.mcmc(mod.fit)
+plot(mcmc_lm)
+```
+The chains are well mixed and they are each in top of the others, so it's a good result meaning that they converge to the same value!
+
+```{r}
+#now we want to see how the autocorrelation is in our #model, since as seen we had many problems developing #models with good n.eff
+chains <- mod.fit$BUGSoutput$sims.array
+bayesplot::mcmc_acf(chains)
+```
+After all the horrible results we got in the development we see that our autocorrelation rapidly goes to zero, this is a good sign!
+
+
+```{r}
+# Diagnostic with coda
+coda.fit <- as.mcmc(mod.fit)
+
+coda::geweke.plot(coda.fit)
+coda::gelman.plot(coda.fit)
+```
+From the Geweke plot, we see that almost in eevery chain we had scores well withing the 2 standard deviation of 0, since there is not evidence for a lack of convergence!\  
+
+For the shrink factor, we see that our parameters are alwasy below it, meaning we have no problems.
+The gelman.plot gives us the scale reduction factors for each parameter. A factor of 1 means that between variance and within chain variance are equal, larger values mean that there is still a notable difference between chains. Often, it is said that everything below 1.1 or so is OK, but note that this is more a rule of thumb. The gelman, plot shows the development of the scale-reduction over time (chain steps), which is useful to see whether a low chain reduction is also stable (sometimes, the factors go down and then up again, as you will see). Also, note that for any real analysis, we have to make sure to discard any bias that arises from the starting point of your chain (burn-in), typical values here are a few 1000-10000 steps. The gelman plot is also a nice tool to see roughly where this point is, that is, from which point on the chains seem roughly converged (in this case seems our choice of 2000 seems not enough, maybe we would prefer to set it at 5000 another time).
+
+
+```{r EFF}
+require(LaplacesDemon)
+E1 = LaplacesDemon::ESS(mod.fit$BUGSoutput$sims.array[,1,1])  #EFF for a1LP
+
+E2 = LaplacesDemon::ESS(mod.fit$BUGSoutput$sims.array[,1,2])  #EFF // a1tiers 1
+
+E3 = LaplacesDemon::ESS(mod.fit$BUGSoutput$sims.array[,1,3])  #EFF //2
+
+E4 = LaplacesDemon::ESS(mod.fit$BUGSoutput$sims.array[,1,4]) #// 3
+
+E5 = LaplacesDemon::ESS(mod.fit$BUGSoutput$sims.array[,1,5]) #// 4
+
+E6 = LaplacesDemon::ESS(mod.fit$BUGSoutput$sims.array[,1,6]) #//5
+
+E7 = LaplacesDemon::ESS(mod.fit$BUGSoutput$sims.array[,1,7])  #// 6
+
+E8 = LaplacesDemon::ESS(mod.fit$BUGSoutput$sims.array[,1,8]) #EFF for base
+
+eff <- c('a1Lp' = E1, 'a1tiers[1]' = E2,'a1tiers[2]' = E3,'a1tiers[3]' = E4,'a1tiers[4]' = E5,
+         'a1tiers[5]' = E6,'a1tiers[6]' = E7,'base' = E8)
+eff
+```
+
+
+```{r}
+
+#we now manipulate the chain
+chainMat <- mod.fit$BUGSoutput$sims.matrix
+
+' Point estimates'
+(Exp.hat.jags <- colMeans(chainMat))
+'---------------------------'
+
+' Intervals ET'
+cred <- 0.95
+(Exp.ET.jags <- apply(chainMat, 2, quantile, prob=c((1-cred)/2, 1-(1-cred)/2)))
+#beta.ET.jags
+'-----------------------'
+'HPD'
+# What about the HPD?
+(Exp.HPD.jags <- coda::HPDinterval(as.mcmc(chainMat)))
+
+#they seem to agree with the point estimate and we see that the HDP seems smaller and #probably more precise
+```
+I rerun it, without showing the summary, since at this point we will have the wins in a prameter fashion.
+```{r,results='hide'}
+set.seed(123)
+#call it model5 since is the 5th of our project!
+
+model5 <- function() {
+  # Likelihood
+  for(i in 1:N)
+  {
+    #for now we just leave the rate parameters as in simulation as dependence
+    Wins[i]  ~ dexp( a1[i])# a1[i])#, a2[i])
+    
+    a1[i] <- (base/(a1tiers[tier[i]]+(a1Lp*LP[i]))^2)
+    
+    Wins.rep[i] ~ dexp( a1[i])
+  }
+  
+  # Priors
+  base ~ dunif(0.2, 0.6)
+  a1Lp ~ dunif(0, 0.05)
+  for (i in 1 : tierstypes)
+  {
+    a1tiers[i] ~ dnorm(i, i ) #as explained we want it to grow with the rank
+  }
+  
+}
+mod.params5 <- c( 'a1tiers', 'a1Lp', 'base', 'Wins.rep')
+
+mod.fit <- jags(data = dat.jags,                                    # DATA
+                model.file = model5, #inits = mod.inits,          # MODEL
+                parameters.to.save = mod.params5,                  
+                n.chains = 3, n.iter = 5000, n.burnin = 2000, n.thin=10)  
+
+#Autocorrelation produces clumpy samples that are unrepresentative, in the short run, of the true underlying posterior distribution. Therefore, if #possible, we would like to get rid of autocorrelation so that the MCMC sample provides a more precise estimate of the posterior sample. One way #to decrease autocorrelation is to thin the sample, using only every nth step.
+
+
+mod.fit
+#mod.fit$BUGSoutput$summary
+```
+
+```{r}
+'focus on the predicted values'
+
+predIdx <- grep("Wins.rep", colnames(mod.fit$BUGSoutput$sims.matrix))
+chainPredMat <- mod.fit$BUGSoutput$sims.matrix[,predIdx]
+
+# Point estimates
+#(pred.hat.jags <- colMeans(chainPredMat))
+
+# Mean Squared Error
+#'MSE'
+#(MSE <- mean((pred.hat.jags-Wins2)^2))
+
+# Intervals
+cred <- 0.95
+#(Pred.ET.jags <- apply(chainPredMat, 2, quantile, 
+                         #   prob=c((1-cred)/2, 1-(1-cred)/2)))
+
+# Coverage
+'Coverage'
+(cov <- mean(Wins2>=apply(chainPredMat, 2, quantile, 
+                            prob=c((1-cred)/2, 1-(1-cred)/2))[1,] & Wins2<=apply(chainPredMat, 2, quantile, 
+                            prob=c((1-cred)/2, 1-(1-cred)/2))[2,]))
+
+
+#(cov <- mean(Wins2>=Pred.ET.jags[1,] & Wins2<=Pred.ET.jags[2,]))
+
+'MSE'
+# Mean Squared Error
+(MSE <- mean((colMeans(chainPredMat)-Wins2)^2))
+'RMSE'
+(RMSE <- MSE/var(Wins2))
+
+```
+Great Coverage!!!!!!!!! Here we got some great results!
+
+
+# Conclusion
+
+The main aim of this project was to become more confident with R and his instrument to perform bayesian analysis, for this reason we tried many different assumptions in the likelihood, even some that have no 0 for the Wins (there are a few players with 0 wins and we must account for that!). We tried to use every likelihood assumption that resembled our data and our models account for the fact that the density transforms for everyone of the 6 ranks we considered. The result was that an exponential likelihood, with some methods we developed for every ties, would generates our best model. In the end the diagnostic showed us clear signs of convergence and a good absence of autocorrelation, we saw also that the simulations to discard should have been around 5000 not 2000 as we selected, and that we present indeed a good enough coverage. All this things open new paths and possible solutions, first of all run more the model and possibly add some more features in the analysis. 
+
+Leonardo Placidi mat.1761588
+
