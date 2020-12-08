@@ -1,0 +1,813 @@
+---
+title: "HMKStat4DSII for Professor Tardella"
+author: "Leonardo Placidi mat.1761588"
+date: "27/7/2020"
+output: html_document
+---
+# EXERCISE 1
+### PART 1
+```{r}
+set.seed(123)
+# Code for A/R implementation in the particulare case:
+
+# - the auxiliary is a Cauchy distibution
+# - the target is a Standard Normal
+
+
+#target
+curve(dnorm(x,0,1),col="red",lwd=2,ylim=c(-4,4), xlim = c(-4,4))
+#curve(dbeta(x,1,1),col="blue",lwd=2,add=TRUE,ylim=c(0,0))
+
+k=4#arbitrary value to start
+#dcauchy is the auxiliary
+curve(dcauchy(x,0,1),col="blue",lwd=2,add=TRUE)
+
+```
+```{r}
+#Here I need to find the bestv k, that is the M
+#from the previous image not only we see that both distribution are simmetric, but that also from |x|=2 the quotient target/auxiliary goes fast <=1
+#so to approximate the maximum quotient such that t/aux <= k_star ==> t<=k_star(aux) for every x
+#I just do a quick simulation adding at the end an error of 0.2 to be sure to not be missing the real max
+x_grid=seq(0,2.3,length=100000)
+
+ef=function(x){
+  dnorm(x,0,1)/dcauchy(x,0,1)
+}
+
+k_star <- max(ef(x_grid))
+di0 = 0
+g = ef(x_grid)
+for(i in range(1, length(g)-2)){
+  dis = abs(g[i]-g[i+1])
+  if (dis > di0){
+    di0 = dis
+  }
+}
+final_k = k_star + 100*di0
+print(k_star)
+print(final_k)
+print(di0)
+```
+
+
+
+```{r}
+#Now that we have the best k let's shot the plot in a ordered way :)
+curve(dnorm(x,0,1),col="red",lwd=2,ylim=c(-2,2), xlim = c(-2,2))
+
+curve(final_k*dcauchy(x,0,1),col="blue",lwd=2,add=TRUE)
+
+text(2,1,labels=expression(k~f[U](x)), col = "blue")
+text(0,-0.7,labels=expression(f[X](x)),col="red")
+
+legend(x="topleft",lty=1,lwd=2.4,col=c("red","blue"),legend=c("target density","bounding function"))
+title(main="A/R")
+```
+
+Note that the immediate following simulation will not draw 10000 candiadates, but will reject some of them giving E == 0.
+Later I will use the aopproach to derive 10000 simulated values, computing then the efficiency.
+
+```{r}
+### SIMULATION 
+
+#target distribution
+target = function(x) {
+  dnorm(x,0,1)
+}
+
+#auxiliary distribution
+aux = function(x){
+  dcauchy(x,0,1)
+}
+
+#final_k aslready found
+
+n_sim_aux=10000
+#empty vectors as Y values to be simulated, E with 0-1 depending on accepting or not
+Y=rep(NA,n_sim_aux)
+E=rep(NA,n_sim_aux)
+
+for(i in 1:n_sim_aux){
+  Y[i]= rcauchy(1, 0, 1)
+  E[i] = rbinom(1,size=1,prob=target(Y[i])/(final_k*aux(Y[i])))
+}
+
+head(cbind(Y,E))
+#X vector with only accepted values
+X=Y[E==1]
+
+length(X)
+
+
+
+
+
+#then if we want to talk about 'Acceptance Probability for a random value generated' we get
+#to not be confused with the Acceptance probability used in the Binomial of the simulation!!!!
+
+
+
+
+Acc_prob <- length(X)/n_sim_aux
+cat('Acceptance Probability = ', Acc_prob)
+hist(X,prob=TRUE)
+#let's plot also the target to be sure we are not doing errors
+curve(target(x),add=TRUE,col="red",lwd=3)
+```
+### PART2
+```{r}
+#so we already found out that the Acceptance Probability is 0.6495 for a random value generated
+#But now to evaluate the perofmance, I can numerically evaluate the average number of trials before finding an accepted value at each point of the simulation
+#As in the first code I just selected the accepted simulations, here is set that the number of values I want to generate is fiex 10.000
+#So let's see how the generation of 10.000 is done
+
+#again the target
+target = function(x) {
+  dnorm(x,0,1)
+}
+
+#auxiliary distribution
+aux = function(x){
+  dcauchy(x,0,1)
+}
+
+#now to ease the concept of simulation I declare it
+random_aux = function(x){
+  rcauchy(x,0,1)
+}
+
+#in this function there is again the simulation of a value, but it keeps repeating until I accept the value
+#also saving the iteration needed to get it
+AR2 = function(target, aux, random_aux, final_k) {
+  iterations=0
+  accepted=0
+  while(accepted==0){
+    candidate = random_aux(1)
+    acc_prob=target(candidate)/(final_k*aux(candidate))
+    accepted = rbinom(1,size=1,prob=acc_prob)
+    iterations = iterations +1
+  }
+  return(list(draw=candidate,computational_effort=iterations))
+  
+}
+
+#at this point let's geenrate the 10.000 values and see the average iterations to accept a value
+n_sim_aux=10000
+#empty vectors as Y values to be simulated, E with 0-1 depending on accepting or not
+X=rep(NA,n_sim_aux)
+Effort=rep(NA,n_sim_aux)
+
+for(i in 1:n_sim_aux){
+  both= AR2(target, aux, random_aux, final_k)
+  X[i] = both$draw
+  Effort[i] = both$computational_effort
+}
+#print(X)
+hist(X, prob = TRUE)
+curve(target(x),add=TRUE, col = 'red')
+
+plot(prop.table(table(Effort)),ylim=c(0,1),pch=16,col="red")
+points(1:20,dgeom(0:19,prob=1/final_k))
+print(mean(Effort))
+print('Well 1.51 is very good')
+```
+So I can evaluate numerically the efficiency of the strategy based on how many iterations in average are needed to obtain the asked number of simulations, to do so I just counted the number of rejections before an acceptance for each simulated value and is also clear that changing k to not optimal values it will lower the quality of the method.
+
+
+```{r}
+#let's briefly see what happens if i put a worst k
+n_sim_aux=10000
+#empty vectors as Y values to be simulated, E with 0-1 depending on accepting or not
+X=rep(NA,n_sim_aux)
+Effort=rep(NA,n_sim_aux)
+
+for(i in 1:n_sim_aux){
+  both= AR2(target, aux, random_aux, final_k+2)
+  X[i] = both$draw
+  Effort[i] = both$computational_effort
+}
+#print(X)
+hist(X, prob = TRUE)
+curve(target(x),add=TRUE)
+
+plot(prop.table(table(Effort)),ylim=c(0,1),pch=16,col="red")
+points(1:20,dgeom(0:19,prob=1/final_k))
+print(mean(Effort))
+#well if before the mean number of iteration was 1.5, now is pretty worse with 3.47!!!
+#K must be chosen in the best way!!!!
+```
+
+
+
+
+
+# EXERCISE 2
+
+### Provide the definition of an infinitely echangeable binary sequence of random variables X1, ..., Xn, .....
+
+A sequence of random variables $X_1,...,X_n,....$ is *exchangeable* if for any k-tuple $(n_1, ..,n_k)$ and any permutation $\sigma = (\sigma_1,...,\sigma_k)$ of the first k integers the following holds
+$$(X_{n_1}, ..., X_{n_k})=(X_{\sigma_{n_1}}, ..., X_{\sigma_{n_k}})$$
+*Infinitely Exchangeability* presents when the sequence of random variable is infinite and so the exchangeability hold infinitely for every subset of the sequence.<br>
+In case the sequence is binary (there are only 2 possible values for each variables), in case it satisfies the previous requirements, it's said  *an infinitely echangeable binary sequence of random variables*.
+
+#### a
+1) Given that the variables $X_i$ are binary we can model them as a bernoulli and use extensively De Finetti Theorem. So being $E[X_i]=\sum_i x_ip(x) =xDeFinetti= 1*\int_{[0.1]}\theta\pi(\theta)d\theta+0*\int_{[0.1]}(1-\theta)\pi(\theta)d\theta= E_\theta[\pi]$.
+<br>
+2) $E[X_iX_j]=\sum_i\sum_jx_ix_jj(x_i,x_j)=1*j(x_i=success, x_j=success)=\int_{[0,1]}\theta^2(1-\theta)^0\pi(\theta)d\theta=E_\pi[\theta^2]$
+<br>
+3) From what I saw in 1) and 2): $Cov[X_iX_j]=E[X_iX_j]-E[X_i]E[X_j]=E_\pi[\theta^2]-E_\pi[\theta]^2=Var_\pi[\theta]$
+
+#### b
+1) Being true that $Cov[X_iX_j]=Var_\pi[\theta]$, the variance is a non-negative function, so being positive implies that any couple of random variabes in that sequence must be non-negatively correlated.
+
+#### c
+1) We have that $Cor[X_i,X_j] = \frac{Cov[X_i,X_j]}{\sigma_{X_i}\sigma_{X_j}}=1$ $\rightarrow$ $Var_\pi[\theta]=Var[X]=$from 1) and 2) and what said before $=E_\pi[\theta](1-E_\pi[\theta])$ $\rightarrow$ $E_\pi[\theta^2]-E_\pi[\theta]^2 = E_\pi[\theta] - E_\pi[\theta]^2$ $\rightarrow$ $E_\pi[\theta^2]=E_\pi[\theta]$.
+
+#### d
+1) The condition $E_\pi[\theta^2]=E_\pi[\theta]$ $\rightarrow$ $\int_{[0,1]}\theta^2\pi(\theta)d\theta =\int_{[0,1]}\theta\pi(\theta)d\theta$.<br> So the $\pi$ distribution must be *discrete* since the function inside the integral share the relation $A=\theta k = k = B,\; k\neq 0$,so the integral is equal to 0. for the shape there is not a definite one, an example can be a bernoulli such that $\theta = 1 \iff Probability = 1, \theta \neq 1 \iff Probability = 0$, but substantially any discrete probability will suffice because integrals do not feel the outliers discrete points that have mass, so the equality at the start will hold and will always be of value zero.
+
+
+# EXERCISE 3
+
+Theorical Formulas and computations for this exercise can be found on the attached PDF *explanationEX3.pdf*.
+```{r}
+my_data <- read.table("dugong-data.txt", header = TRUE, row.names = NULL)
+head(my_data)
+nrow(my_data)
+ncol(my_data)
+```
+#### 3a)
+So we have this Dugong data consisting of 27 rows and 3 columns (Index, Length, Age). To study it we are considering a non linear regression moded of which I will describe the variables in the following.
+From now on Y_i are the Lengths of the Dugongs and Y_i is modeled by a normal distribution $Y_i \sim N(m_i, t^2)$, where $\mu_i = f(x_i) = \alpha - \beta\gamma^{(x_i)}$. <br>
+To develop a model we have to make assumptions so here is assumed $\alpha \sim N(0, \sigma_\alpha^2)$ <br>
+$\beta \sim N(0, \sigma_\beta^2)$ <br>
+$\gamma \sim Unif(0,1)$ <br>
+$\tau^2 \sim IG(a,b)$. <br>
+From this we have then that $\alpha \in \Re, \; \beta \in \Re,\; \gamma \in (0,1), \; \tau^2 \in (0,\inf)$.
+
+#### 3b)
+
+One of the main objective of the analysis is to find the Posterior distribution $\pi(x|Y)$, to achieve this not only we would need the prior (merely the product of the distributions quoted above), but also the object of this 3b) that is the *Likelihood*.
+<br>
+Let's compute the Likelihood, or better $\pi(Y|x)$.<br>
+Given that we assume x fixed, and given the assumption is just a matter of fixing x_i inside the normal so $\pi(Y_i|x_i) \sim N(\alpha - \beta\gamma^{(x)}, \tau^2)$ so $Likelihood=\frac{1}{(2\tau^2)}^{|Y|/2}\exp{-(\sum (y_i - alpha + \beta\gamma^{(x)})^2/2\tau^2)}$
+
+
+
+#### 3c)
+```{r}
+library(stats4)
+library(graphics)
+
+
+#x_i are the ages
+my_data <- read.table("dugong-data.txt", header = TRUE, row.names = NULL)
+x_i = my_data['Age']
+
+Likelihood <- function(my_data = my_data, interesting){
+  alpha <- interesting[1]
+  beta <- interesting[2]
+  tau2 <- interesting[3]
+  gamma <- interesting[4]
+  Y <- my_data[,2]
+  x <- my_data[,3]
+
+ 1/(2*tau2*pi)^(length(Y)/2)*exp(-sum(Y-alpha+beta*gamma^x)^2/(2*tau2))}
+ 
+
+Mle = optim(par = c(1,1,1,1), my_data = my_data, fn = Likelihood,  gr = NULL, 
+      method = "SANN")#,
+
+prior <- function(my_data, interesting) {
+  alpha <- interesting[1]
+  beta <- interesting[2]
+  tau2 <- interesting[3]
+  gamma <- interesting[4]
+  s_a2 <- 1
+  s_b2 <- 4
+    a <-1
+    b <-1
+    
+    N1 <- (1/(2*pi*s_a2)^(1/2))*exp(-alpha^2/2*s_a2)
+    N2 <- (1/(2*pi*s_b2)^(1/2))*exp(-beta^2/2*s_b2)
+    GAmma <- (b^a/gamma(a))*(tau2^(-a-1))*exp(-b/tau2)
+    if(gamma > 0 | gamma <= 1){
+        return(N1*N2*GAmma)}
+    else {
+      return(0)
+    }
+  
+}
+
+Posterior <- function(my_data = my_data, interesting){
+  alpha <- interesting[1]
+  beta <- interesting[2]
+  tau2 <- interesting[3]
+  gamma <- interesting[4]
+  Y <- my_data[,2]
+  x <- my_data[,3]
+  return(Likelihood(my_data, interesting)*prior(my_data,interesting))
+}
+MaP = optim(par = c(1,1,1,1), my_data = my_data, fn = Posterior,  gr=NULL,  method = "SANN")#,
+cat('Maximum Likelihood Estimator')
+print(Mle)
+cat('Maximum a Posteriori' )
+print(MaP)
+
+#As we see parameters choices, makes the comparison pretty though and we see no similarity between the two.
+```
+
+
+#### 3d)
+Prior = product of the priors = $\pi(\alpha, \beta, \gamma, \tau^2)=\frac{1}{\sqrt(2\pi\sigma_{\alpha}^2)}\exp{-\frac{\alpha^2}{2\sigma_{\alpha}^2}}\frac{1}{\sqrt(2\pi\sigma_{\beta}^2)}\exp{-\frac{\beta^2}{2\sigma_{\beta}^2}I_{\gamma \in[0,1]}}\frac{b^a}{\Gamma(a)}\tau^{2({-a-1})}\exp{\frac{-b}{\tau^2}}$
+
+The hypermarameters I chose are $\sigma_{\alpha} = 0.4$, $\sigma_{\beta} = 10$ and $a =1, b = 2$.
+So <br>
+$\alpha \sim N(0, 0.16)$ <br>
+$\beta \sim N(0, 100)$  <br>
+$\tau^2 \sim IG(1,2)$. <br>
+ Those parameters are chose to optimize the distirbutions in 3l) and 3m) and obtain a model that is very near the Dug data, indeed when in the end I will get some distributions for the DUg of age x, I will obtain all distributions very near to the data, in fact the mean of those normals will be very close to the mean of the data column of Length and the real average, indeed the average lenght of a Dugong is 2.6(the data were too poor obtained 2.33), I obtained 2.55 and I was satisfact.
+
+#### 3e) 
+Having the Likelihood as $Likelihood=\frac{1}{(2\tau^2)}^{|Y|/2}\exp{-(\sum (y_i - alpha + \beta\gamma^{(x)})^2/2\tau^2)}$ and the Prior as $\pi(\alpha, \beta, \gamma, \tau^2)=\frac{1}{\sqrt(2\pi\sigma_{\alpha}^2)}\exp{-\frac{\alpha^2}{2\sigma_{\alpha}^2}}\frac{1}{\sqrt(2\pi\sigma_{\beta}^2)}\exp{-\frac{\beta^2}{2\sigma_{\beta}^2}I_{\gamma \in[0,1]}}\frac{b^a}{\Gamma(a)}\tau^{2({-a-1})}\exp{\frac{-b}{\tau^2}}$, we know that $Posterior \sim Prior*Likelihoo$, so computing the product with the fixed hyperparameters of 3d), and discarding every constant(e.g. $\frac{1}{\sqrt(2\pi\sigma_{\alpha}^2)}$), the final form of the Posterior probability is:
+$Posterior(\alpha, \beta, \gamma, \tau^2|Y) \sim\frac{1}{(\tau^2)^{|Y|/2}}\tau^{2(-a-1)}\exp({-\sum(y_i-\alpha+\beta\gamma^{x_i})^2/2\tau^2 - \alpha^2/2\sigma_\alpha - \beta^2/2\sigma_\beta - b/\tau^2})I_{[\gamma \in [0,1]]}$
+
+
+#### 3f)
+
+
+```{r}
+library('invgamma')
+set.seed(123)
+nsim = 10000 #simulions
+#lets remember
+#The hypermarameters I chose are $\sigma_{\alpha} = 1$, $\sigma_{\beta} #= 2$ and $a = b = 1$'''
+sigma_a2 <- 0.4 #
+sigma_b2 <- 10#
+a <-1
+b <- 2 
+#for initialize the parameters
+#series of Functions for the mean and Sd of every single Normal or shape #and rate
+
+
+
+
+
+'for alpha full cd'
+mu_alpha <- function(beta, sigma_a2, tau2, gamma,  Y = my_data[,2], x = my_data[,3]){
+  num = (2*(sigma_a2^2)*sum(Y)+ 2*(sigma_a2^2)*beta*sum(gamma^x))
+  den = length(Y)*sigma_a2^2 + tau2
+  return(num/den)
+}
+sigma_alpha <- function(beta, sigma_a2, tau2, gamma,  Y = my_data[,2], x = my_data[,3]){
+  num = tau2*sigma_a2
+  den = length(Y)*sigma_a2^2 + tau2
+  return((num/den)^2)
+}
+
+
+
+
+'for beta full cd'
+
+mu_beta <- function(alpha, sigma_b2, tau2, gamma,  Y = my_data[,2], x = my_data[,3]){
+  num = 2*sigma_b2*sum(Y*gamma^x)-2*sigma_b2*alpha*sum(gamma^x)
+  den = sigma_b2*sum(gamma^(2*x))+tau2
+  return(num/den)
+}
+
+sigma_beta <- function(alpha, sigma_b2, tau2, gamma,  Y = my_data[,2], x = my_data[,3]){
+  num = sigma_b2*tau2
+  den = sigma_b2*sum(gamma^(2*x))+tau2
+  return((num/den)^2)
+}
+
+
+
+'Gamma is unknown so is not here will be implemented with metropolis'
+TheGammaDis <- function(beta, gamma, alpha, Y = my_data[,2], tau2,  x = my_data[,3]){
+
+  if((gamma <=1)&(gamma >=0)) {
+    #for reason of overflow, after a little analysis i decided that thins function will only return the exponent
+    #then I will do e^a/e^b = e^(a-b)
+    #with result that usually a and b are similar in size so no overflow will ever happen again
+    #I could have scaled the log but this method works and is fine for me
+    num = (-sum(beta^(2)*gamma^(2*x)-2*alpha*beta*gamma^x+2*Y*beta*gamma^x)/(2*tau2))
+   
+}
+  else {
+    num = 0
+  }
+  return(num)
+}
+
+
+
+'tau^2 full cd'
+shape_tau2 <- function(alpha, Y = my_data[,2]){
+  num = length(Y)/2 + alpha 
+  return(num)
+}
+rate_tau2 <- function(alpha, gamma, beta,  Y = my_data[,2], x = my_data[,3], b){
+  num = (sum((Y-alpha+beta*gamma^x)^2)+2*b)/2
+  return(num)
+}
+
+gibbs_normGauMet_cycle <-function(nsim, alphastart,
+                                  betastart, gammastart, tau2start){
+  #empty vectors
+  alphasim <- rep(NA,nsim+1)
+  betasim <- rep(NA,nsim+1)
+  gammasim <- rep(NA,nsim+1)
+  tau2sim <- rep(NA,nsim+1)
+  #initialization at t = 1
+  alphasim[1] <- alphastart
+  betasim[1]  <- betastart
+  gammasim[1] <- gammastart
+  tau2sim[1]  <- tau2start
+  
+  for(t in 1:nsim){
+    #parameters_alphaNormal
+    mean_alpha <- mu_alpha(betasim[t], sigma_a2, tau2sim[t],
+                           gammasim[t], my_data[,2], my_data[,3])
+    sd_alpha <- sigma_alpha(betasim[t], sigma_a2, tau2sim[t],
+                            gammasim[t],my_data[,2], my_data[,3]) 
+    
+    alphasim[t+1]<-rnorm(1,mean=mean_alpha,sd=sd_alpha)
+    
+    #parameters_betaNormal
+    
+    mean_beta <- mu_beta(alphasim[t+1], sigma_b2, tau2sim[t],
+                         gammasim[t], my_data[,2], my_data[,3])
+    sd_beta <- sigma_beta(alphasim[t+1], sigma_b2, tau2sim[t],
+                          gammasim[t], my_data[,2],my_data[,3])
+    
+    betasim[t+1]<-rnorm(1, mean=mean_beta, sd=sd_beta)
+    
+    #here metropolis for gammasim but only one draw at each step
+    #gamma takes values in [0,1] so the proposal will be the unif([0,1])
+    
+    
+    #This part is if you dfo metropolis on first trial and not with 100 simuklations
+###    z <- gammasim[t]
+###    gammaprop <- runif(1,0,1)
+    
+###    inside <- c(exp(TheGammaDis(betasim[t+1],gammaprop,alphasim[t+1], my_data[,2],tau2sim[t], ###my_data[,3])-TheGammaDis(betasim[t+1], z,alphasim[t+1],my_data[,2],tau2sim[t],  my_data[,3] )), 1)
+    #i did the subtraction to try to scale the exponential to avoid to get some 0 that would #result in Nan
+###    ACCEPT <- (log(gammaprop) < log(min(inside)))
+
+###    gammasim[t+1] <- ifelse(ACCEPT, gammaprop, z)
+  #  cat('gammasim', gammasim[t+1])
+    
+    z <- gammasim[t]
+    ## draw a candidate for the next/future state of the
+    #chain at time(t)
+    #Here i do 100 simulations and take average since only 1 point seems erroneous
+    met_vec <- rep(NA,100)
+    met_vec[1] <- z
+    for(j in 1:100){
+      
+    gammaprop <- runif(1,0,1)
+    inside <- c(exp(TheGammaDis(betasim[t+1],gammaprop,alphasim[t+1], my_data[,2],tau2sim[t], my_data[,3])-TheGammaDis(betasim[t+1], met_vec[j],alphasim[t+1],my_data[,2],tau2sim[t],  my_data[,3] )), 1)
+    #i did the subtraction to try to scale the exponential to avoid to get some 0 that would #result in Nan
+    ACCEPT <- (log(gammaprop) < log(min(inside)))
+    met_vec[j+1] <- ifelse(ACCEPT, gammaprop, z)
+    }
+    gammasim[t+1] <- mean(met_vec)
+
+    shapetau2 <- shape_tau2(alphasim[t+1], my_data[,2])
+    ratetau2 <- rate_tau2(alphasim[t+1], gammasim[t+1], betasim[t+1],
+                            my_data[,2], my_data[,3], b)
+    tau2sim[t+1] <- rinvgamma(1, shapetau2, ratetau2)
+   # cat('tell me where4')
+ #   print('alibaba')
+  #  print(alphasim[c(1:t+1)])
+   # print(betasim[c(1:t+1)])
+ #   print(gammasim[c(1:t+1)])
+    #print(gammasim[t+1])
+  # # print('tau')
+  #  print(tau2sim[c(1:t+1)])
+  #  print('e i 40 ladroni di NA')
+  #prints proof of a long debugging for god's sake
+    
+    }
+  gibbssample<-cbind(alphasim, betasim, gammasim, tau2sim)
+  return(gibbssample)
+}
+#my starting points are realistic points in thos distributions and seem to work properly
+my_gibbs <- gibbs_normGauMet_cycle(10000, 1,
+                                  2, 0.5, 1)
+head(my_gibbs)
+```
+
+#### 3g)
+Here follows the Trace-plots of the variables. 
+```{r}
+plot(my_gibbs[,'alphasim'], type="l")
+plot(my_gibbs[,'betasim'], type="l")
+plot(my_gibbs[,'gammasim'], type="l")
+plot(my_gibbs[,'tau2sim'], type="l")
+```
+
+
+
+#### 3h)
+Here the Empiraical averages behaviour in each step, we notice that as from theory we alwasy have some time before the simulated number start to be more stationary and possibly converge. The worst are then gamma dn tau2, with around 500 simulations before stabilizing.
+```{r}
+alphasim_ = my_gibbs[,'alphasim']
+betasim_ = my_gibbs[,'betasim']
+gammasim_ = my_gibbs[,'gammasim']
+tau2sim_ = my_gibbs[,'tau2sim']
+empaverage <- function(lis ){
+  index_arrive = length(lis)
+  vec <- c()
+  for(i in 1 : index_arrive){
+  vec <- c(vec, mean(lis[c(1:i)]))}
+  return(vec)
+}
+
+plot(empaverage( alphasim_), type = 'l')
+plot(empaverage(betasim_), type = 'l')
+plot(empaverage(gammasim_), type = 'l')
+plot(empaverage(tau2sim_), type = 'l')
+
+```
+
+As we saw at lessons we could discard the first simulations, since there is usually a certain time before the distribution start stabilizing.
+
+#### 3i)
+
+
+The Approximation for each variable will the the mean value fo the simulation, then to compute the approximation error I will use what we called at lesson ESS (efficiency sample size).
+$t_{eff} = \frac{t}{1+s\sum_k\rho_k}$
+where $\rho_k = \gamma_k/\sigma^2$ where $\gamma_k = Cov[val_0, val_k]$ ( val is a simulated value).<br>
+ESS is one of the criteria in the Consort function, where stopping the MCMC updates is not recommended until $ESS ≥100$
+. Although the need for precision of each modeler differs with each model, it is often a good goal to obtain $ESS =1000$.
+The effective sample size – rather than the actual sample size – is typically used when determining if an MCMC model has converged.
+<br>
+In this case I will approximate since start of simulation, but as we saw at lesson there is alwasy a time to reach a stationarity phase, such as illustrated in the previous point, so while alphasim seems to be very quicky stationary, we see that gammasim or even tau2sim need 1000 or more simulations before reaching some stable values. Obviously this is also dictated by the starting point I chose. 
+
+
+
+```{r}
+#Code for alphasim
+library(LaplacesDemon)
+approx_alpha <- mean(my_gibbs[, 'alphasim'])
+cat('Approx Alpha', approx_alpha)
+ESS <- ESS(my_gibbs[, 'alphasim'])
+cat('\nESS', ESS)
+#or alternatively
+
+
+```
+
+
+```{r}
+#Code for alphasim
+library(coda)
+approx_beta <- mean(my_gibbs[, 'betasim'])
+cat('Approx Beta', approx_beta)
+ESS <-ESS(my_gibbs[, 'betasim'])
+cat('\nESS', ESS)
+
+```
+
+```{r}
+library(coda)
+approx_gamma <- mean(my_gibbs[, 'gammasim'])
+cat('Approx Gamma', approx_gamma)
+ESS <-ESS(my_gibbs[, 'gammasim'])
+cat('\nESS', ESS)
+
+```
+
+```{r}
+approx_tau2 <- mean(my_gibbs[, 'tau2sim'])
+cat('Approx Tau^2', approx_tau2)
+ESS <- ESS(my_gibbs[, 'tau2sim'])
+cat('\nESS', ESS)
+
+```
+
+```{r}
+'For the ESS I could also have done '
+ESS(my_gibbs)
+```
+Is pretty clear that $\beta$ is converging pretty well, while $\alpha, \gamma, \tau^2$ seem to have some more problems in convergence and even excluding some initial values it keeps still at half the dimension of the data.
+
+#### 3j)
+I estimated the Posterior UNcertainty using the HPD interval in the p.interval function.<br>
+The worst parameter will be the one with the largest interval, meaning the values are quite sparse.
+
+The HPD (highest posterior density) interval is identical to the quantile-based probability interval when the posterior probability distribution is unimodal and symmetric. Otherwise, the HPD interval is the smallest interval, because it is estimated as the interval that contains the highest posterior density. Unlike the quantile-based probability interval, the HPD interval could be one-tailed or two-tailed, whichever is more appropriate.
+
+```{r}
+alphaCI <- p.interval(my_gibbs[,'alphasim'], HPD=TRUE, MM=FALSE, prob=0.95)
+betaCI <- p.interval(my_gibbs[,'betasim'], HPD=TRUE, MM=TRUE, prob=0.95)
+gammaCI <- p.interval(my_gibbs[,'gammasim'], HPD=TRUE, MM=TRUE, prob=0.95)
+tau2CI <- p.interval(my_gibbs[,'tau2sim'], HPD=TRUE, MM=TRUE, prob=0.95)
+print(p.interval(my_gibbs, HPD=TRUE, MM=FALSE, prob=0.95))
+print('alphaCI \n')
+print('\n width \n')
+print(abs(alphaCI[2]-alphaCI[1]))
+print('betaCI \n')
+print('\n width \n')
+print(abs(betaCI[2]-betaCI[1]))
+print('gammaCI \n')
+print('\n width \n')
+print(abs(gammaCI[2]-gammaCI[1]))
+print('tau2CI \n')
+print('\n width \n')
+print(abs(tau2CI[2]-tau2CI[1]))
+#The most uncertain is beta
+#it remains it even if I discard the first 1000 samples every time!
+```
+The most uncertain is $\beta$ with $ICwidth\sim 345$ since the credibility interval is the largest, it means values are more sparse and not concentrated, maybe if I exclude the first values it would be different since beta oscillates a lot at start.
+
+Let's see
+```{r}
+alphaCI <- p.interval(my_gibbs[2000:10000,'alphasim'], HPD=TRUE, MM=FALSE, prob=0.95)
+betaCI <- p.interval(my_gibbs[2000:10000,'betasim'], HPD=TRUE, MM=TRUE, prob=0.95)
+gammaCI <- p.interval(my_gibbs[2000:10000,'gammasim'], HPD=TRUE, MM=TRUE, prob=0.95)
+tau2CI <- p.interval(my_gibbs[2000:10000,'tau2sim'], HPD=TRUE, MM=TRUE, prob=0.95)
+print(p.interval(my_gibbs, HPD=TRUE, MM=FALSE, prob=0.95))
+print('alphaCI \n')
+print('\n width \n')
+print(abs(alphaCI[2]-alphaCI[1]))
+print('betaCI \n')
+print('\n width \n')
+print(abs(betaCI[2]-betaCI[1]))
+print('gammaCI \n')
+print('\n width \n')
+print(abs(gammaCI[2]-gammaCI[1]))
+print('tau2CI \n')
+print('\n width \n')
+print(abs(tau2CI[2]-tau2CI[1]))
+#The most uncertain is beta
+#it remains it even if I discard the first 1000 samples every time!
+```
+Indeed almost the same!
+
+#### 3k)
+```{r}
+a <- cor(my_gibbs, method = c("pearson"))
+b <- cor(my_gibbs, method = c( "kendall"))
+c <- cor(my_gibbs, method = c("spearman"))
+cat('pearson cr\n')
+print(a)
+cat('\nKendall cr\n')
+print(b)
+cat('\nSpearman cr\n')
+print(c)
+```
+
+So the answer depends on the kind of correlation:
+1) With Pearson we have that $\alpha \; and\; \tau^2$ are the most correlated.<br>
+2) With Kendall we have $\alpha \; and\; \tau^2$ are the most correlated.<br>
+3) With Spearman we have $\gamma \; and\; \tau^2$ are the most correlated.<br>
+
+#### 3l)
+Here we take the approximations (averages) for each parameters, we put them into the main normal that defines the Y_i(length of the Dugong), and well at that point we have the distribution given x, in this case 20 years!
+
+```{r}
+#i already computed
+approx_alpha
+approx_beta
+approx_gamma
+approx_tau2
+Dug_age <- 30
+#so from the assignement we have the normal with the following mean
+mu <- approx_alpha-approx_beta*approx_gamma^(Dug_age)
+sd <- approx_tau2
+#plot(dnorm(x, mu, sd ), xlim = c(-15, 15), ylim = c(-15, 15))
+library(ggfortify)
+'Plot Distribution of Legth of a Dug of age 20'
+ggdistribution( dnorm, seq(mu-30, mu+30, 0.1), mean = mu, sd = sd, colour = 'red',  )
+```
+
+
+```{r}
+Dug_age2 <- 30
+mu <- approx_alpha-approx_beta*approx_gamma^(Dug_age2)
+sd <- approx_tau2
+library(ggfortify)
+'Plot Distribution of Legth of a Dug of age 30'
+ggdistribution( dnorm, seq(mu-30, mu+30, 0.1), mean = mu, sd = sd, colour = 'red',  )
+```
+
+#### 3n) 
+Given that the gamma is in (0,1), the machine, elevating to 20 or 30 does no make difference so theorically the difference in both cases is very little so the distribution appears to be the same (it can be also expected since there is not a significant grow in length from 20 to 30 years in a Dugong and the dataset is too little to get some better understanding).
+So at this point the asses the most precise and idea would be to do the Confidence interval and find the shortest/best, but in this case using the Confidence intervall will give same result as distr are equal.<br>
+So my idea is let's look at the data and at the Dugongs with age 20 or 30 adn see which lenghts are nearer the actual mean of this distribution, so that would be a better estimate.<br>
+I have for the age 30, a Dug of age $31.5$ and Length $2.57$ and one of age $29$ and Length $2.72$, so the average Length is 2.74, instead fot the age 20 we have Age $22.5$ and Length $2.5$, age $17$ L $2.56$ then average is $2.53$. <br>
+Finally the mu for the distributions is $2.555$ then the more precise, given the little data we have (taking that average is very uncomplete), is the one for the Dugongs of age $20$.
+
+
+# Exercise 4
+
+```{r}
+#library(expm)
+mu <- c(0.19, 0.53, 0.28)
+P = matrix( 
+   c(0.47, 0.28, 0.25,
+      0.34, 0.32, 0.34,
+      0.04, 0.53, 0.43), # the data elements 
+   nrow=3,              # number of rows 
+   ncol=3,              # number of columns 
+   byrow = TRUE) 
+```
+
+
+
+
+```{r}
+print(P)
+ 
+#Marginal distribution of X_0 = t(mu)*P where P is ther transition matrix 
+#as the professor asks for something compact 
+#I coded a fast funnction that just takes the index and will return the needed marginal
+#margstate <- function(i, P,  mu ){
+#  value = t(mu)
+#  for(i in seq(0, i, by=1)){
+#    value = (value%*%P)
+#    print(i)
+#  }
+# return(value)
+#}
+'a'
+MX_0 <- t(mu)
+'Marginal distr of X_0'
+#thios is the ASSUMED marginal distribution for X_0
+print(mu)
+'b'
+MX_1 <- c(t(mu)%*%P)
+'Marginal distr of X_1'
+#Well here is the multipliocation of vec of initial marginals * matrix ^ state
+print(MX_1) 
+
+
+#function to find the joint of successive states is the realization of P^n
+# as asked from the teacher we have to do p(X1=r, X0=c)= P^2
+'c'
+'Joint distribution of (X1, X0)'
+#Here we want to considere probability matrix of X1|X0 * X0 so multiply every row for a column of the vector
+print(t(P*mu))#transposed cause is asked X0 on columns
+
+'d'
+'Conditional distributions of X1|X0 as a matrix with generic entry at row r and column c'
+#Since is a definition
+print(P)
+
+
+
+```
+```{r}
+'e'
+P = matrix( 
+   c(0.47, 0.28, 0.25,
+      0.34, 0.32, 0.34,
+      0.04, 0.53, 0.43), # the data elements 
+   nrow=3,              # number of rows 
+   ncol=3,              # number of columns 
+   byrow = TRUE) 
+
+#P(X0|X1) = P(X1|X0)P(X0)/P(X1)
+#P #P(X1|X0)
+#mu #P(X0)
+#MX_1 #P(X1)
+'P(X1|X0), All conditional distributions of X0|X1 as a matrix with generic entry at row r and column c'
+
+print(t(P*mu)/MX_1) #again the trabnspose appears since we need X0 on columns
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
