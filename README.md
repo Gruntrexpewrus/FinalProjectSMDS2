@@ -1,5 +1,7 @@
 # FinalProjectSMDS2
 
+Project developed enterely by Gruntrexpewrus
+
 Statistical Methods in Data Science-Course 2
 
 1)python scripts to create the dataset from the Riot API.
